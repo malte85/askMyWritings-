@@ -23,8 +23,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Load OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# ✅ Load OpenAI (will be initialized on startup if API key is available)
+client = None
 
 INDEX_PATH = "faiss_index.bin"
 MAPPING_PATH = "faiss_mapping.pkl"
@@ -56,6 +56,17 @@ class QueryResponse(BaseModel):
     retrieved_docs: List[RetrievedDocument]
 
 
+def initialize_client():
+    """Initialize OpenAI client"""
+    global client
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable not set")
+    
+    client = OpenAI(api_key=api_key)
+
+
 def load_index():
     """Load FAISS index and mapping"""
     global index, mapping, ids, docs
@@ -75,6 +86,9 @@ def load_index():
 
 def embed_text(text: str) -> np.ndarray:
     """Generate embedding for a given text using OpenAI"""
+    if client is None:
+        raise RuntimeError("OpenAI client not initialized")
+    
     response = client.embeddings.create(
         model="text-embedding-3-small",
         input=[text]
@@ -125,7 +139,15 @@ def query_rag(question: str, top_k: int = 3, model: str = "gpt-4o-mini") -> dict
 
 @app.on_event("startup")
 async def startup_event():
-    """Load FAISS index on startup"""
+    """Load FAISS index and initialize OpenAI client on startup"""
+    try:
+        initialize_client()
+        print("✅ OpenAI client initialized successfully")
+    except ValueError as e:
+        print(f"⚠️  Warning: {e}")
+    except Exception as e:
+        print(f"❌ Error initializing OpenAI client: {e}")
+    
     try:
         load_index()
         print("✅ FAISS index loaded successfully")
