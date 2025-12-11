@@ -174,6 +174,13 @@ uvicorn api:app --reload --host 0.0.0.0 --port 8000
 ### Environment Variables
 
 - `OPENAI_API_KEY` - Your OpenAI API key (required)
+- `ALLOWED_ORIGINS` - Comma-separated list of allowed CORS origins (optional, defaults to "*" for all origins)
+
+**Example:**
+```bash
+export OPENAI_API_KEY='your-api-key-here'
+export ALLOWED_ORIGINS='http://localhost:3000,https://example.com'
+```
 
 ## Error Handling
 

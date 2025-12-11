@@ -3,25 +3,12 @@ import numpy as np
 import pickle
 from openai import OpenAI
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 
-app = FastAPI(
-    title="Ask My Writings API",
-    description="RAG-enhanced LLM API for querying documents",
-    version="1.0.0"
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ✅ Load OpenAI (will be initialized on startup if API key is available)
 client = None
@@ -34,6 +21,52 @@ index = None
 mapping = None
 ids = None
 docs = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    # Startup: Load FAISS index and initialize OpenAI client
+    global client, index, mapping, ids, docs
+    
+    try:
+        initialize_client()
+        print("✅ OpenAI client initialized successfully")
+    except ValueError as e:
+        print(f"⚠️  Warning: {e}")
+    except Exception as e:
+        print(f"❌ Error initializing OpenAI client: {e}")
+    
+    try:
+        load_index()
+        print("✅ FAISS index loaded successfully")
+    except FileNotFoundError as e:
+        print(f"⚠️  Warning: {e}")
+    except Exception as e:
+        print(f"❌ Error loading index: {e}")
+    
+    yield
+    
+    # Shutdown: cleanup if needed
+    print("Shutting down...")
+
+
+app = FastAPI(
+    title="Ask My Writings API",
+    description="RAG-enhanced LLM API for querying documents",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Add CORS middleware
+# NOTE: For production, replace ["*"] with specific allowed origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),  # Configure via environment variable
+    allow_credentials=False,  # Disabled when using wildcard origins
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class QueryRequest(BaseModel):
@@ -119,12 +152,12 @@ def query_rag(question: str, top_k: int = 3, model: str = "gpt-4o-mini") -> dict
     retrieved_docs = [{"content": docs[i], "index": int(i)} for i in I[0]]
     
     # Use OpenAI to answer based on retrieved docs
-    retrieved_texts = [doc["content"] for doc in retrieved_docs]
+    formatted_docs = "\n\n---\n\n".join([f"Document {i+1}:\n{doc['content']}" for i, doc in enumerate(retrieved_docs)])
     response = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": "Answer faithfully using the retrieved documents."},
-            {"role": "user", "content": f"Question: {question}\n\nDocs:\n{retrieved_texts}"}
+            {"role": "user", "content": f"Question: {question}\n\nRetrieved Documents:\n\n{formatted_docs}"}
         ]
     )
     
@@ -135,26 +168,6 @@ def query_rag(question: str, top_k: int = 3, model: str = "gpt-4o-mini") -> dict
         "answer": answer,
         "retrieved_docs": retrieved_docs
     }
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Load FAISS index and initialize OpenAI client on startup"""
-    try:
-        initialize_client()
-        print("✅ OpenAI client initialized successfully")
-    except ValueError as e:
-        print(f"⚠️  Warning: {e}")
-    except Exception as e:
-        print(f"❌ Error initializing OpenAI client: {e}")
-    
-    try:
-        load_index()
-        print("✅ FAISS index loaded successfully")
-    except FileNotFoundError as e:
-        print(f"⚠️  Warning: {e}")
-    except Exception as e:
-        print(f"❌ Error loading index: {e}")
 
 
 @app.get("/")
